@@ -11,7 +11,7 @@ import numpy as np
 from gensim.models import Word2Vec
 
 import KaggleWord2VecUtility
-from keras.models import Model
+from keras.models import Model,Sequential
 from keras.layers import Dense,Dropout,Activation,Embedding,Input,LSTM
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -112,18 +112,29 @@ if __name__ == '__main__':
     #定义普通LSTM结构
 
 
-    sequence_1_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
-    embedding_layer = Embedding(nb_words,
-                                EMBDDING_DIM,
-                                weights=[embedding_matrix],
-                                input_length=MAX_SEQUENCE_LENGTH,
-                                trainable=False)
-    # embedding输出：(None, MAX_SEQUENCE_LENGTH, EMBDDING_DIM)
-    embedded_sequences_1 = embedding_layer(sequence_1_input)
-    hidden_layer1 = LSTM(128,activation='relu')(embedded_sequences_1)
-    hidden_layer1 = Dropout(0.25)(hidden_layer1)
-    pred = Dense(1,activation='sigmoid')(embedded_sequences_1)
-    model = Model(inputs=sequence_1_input,outputs=pred)
+    # sequence_1_input = Input(shape=(MAX_SEQUENCE_LENGTH,), dtype='int32')
+    # embedding_layer = Embedding(nb_words,
+    #                             EMBDDING_DIM,
+    #                             weights=[embedding_matrix],
+    #                             input_length=MAX_SEQUENCE_LENGTH,
+    #                             trainable=False)
+    # # embedding输出：(None, MAX_SEQUENCE_LENGTH, EMBDDING_DIM)
+    # embedded_sequences_1 = embedding_layer(sequence_1_input)
+    # hidden_layer1 = LSTM(128,activation='relu')(embedded_sequences_1)
+    # hidden_layer1 = Dropout(0.25)(hidden_layer1)
+    # pred = Dense(1,activation='sigmoid')(embedded_sequences_1)
+    # model = Model(inputs=sequence_1_input,outputs=pred)
+    # model.compile(loss='binary_crossentropy',
+    #               optimizer='adam',
+    #               metrics=['accuracy'])
+    model = Sequential()
+    model.add(Embedding(nb_words, EMBDDING_DIM,
+                        input_length=MAX_SEQUENCE_LENGTH))
+    model.add(Dropout(0.2))
+    model.add(LSTM(EMBDDING_DIM,
+                   dropout=0.2,
+                   recurrent_dropout=0.2))
+    model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy',
                   optimizer='adam',
                   metrics=['accuracy'])

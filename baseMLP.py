@@ -1,5 +1,8 @@
 #encoding=utf8
 __author__='ZGD'
+"""
+
+"""
 import pandas as pd
 import re
 from bs4 import BeautifulSoup
@@ -10,7 +13,7 @@ import nltk.data
 import logging
 import numpy as np
 from gensim.models import Word2Vec
-from sklearn.ensemble import RandomForestClassifier
+
 import KaggleWord2VecUtility
 from keras.models import Model,Sequential
 from keras.layers import Dense,Dropout,Activation,Embedding,Input
@@ -148,8 +151,8 @@ def mainModel(w2vModel,trainDataVecs,testDataVecs,y_label):
 
     num_features = 300
     output_unit = 2
-    batch_size = 40
-    epoch = 10
+    batch_size = 3000
+    epoch = 20
     word_maxlen = 300
     num_class = 2
     # x_train =
@@ -187,7 +190,7 @@ if __name__ == '__main__':
     MAX_SEQUENCE_LENGTH = 100   #每句话最大的单词数
     MAX_NB_WORDS = 200000
     EMBDDING_DIM = 300
-    batch_size = 128
+    batch_size = 5000
     epoch = 10
     #获取文本列表【w1,w2,w3】
     train_text = getCleanReviews(train)
@@ -207,7 +210,7 @@ if __name__ == '__main__':
 
     data_2 = pad_sequences(x_test_sequences, maxlen=MAX_SEQUENCE_LENGTH)
     # test_ids = test["id"]
-
+    print data_2[0]
     # print '构造词向量矩阵'
     # # 取词向量或分词的最小，之所以加1,因为有一维代表改词没有在训练的词向量中的表示
     # nb_words = min(MAX_NB_WORDS,len(word_index))+1
@@ -235,10 +238,8 @@ if __name__ == '__main__':
     # pred = Dense(1,activation='sigmoid')(embedded_sequences_1)
     # model = Model(inputs=sequence_1_input,outputs=pred)
 
-
-
     model = Sequential()
-    model.add(Dense(512,input_shape=(MAX_SEQUENCE_LENGTH,),activation='relu'))
+    model.add(Dense(256,input_shape=(MAX_SEQUENCE_LENGTH,),activation='relu'))
     model.add(Dropout(0.25))
     model.add(Dense(128,activation='relu'))
     model.add(Dropout(0.25))
@@ -247,20 +248,13 @@ if __name__ == '__main__':
     model.compile(loss='binary_crossentropy',
                   optimizer='adam',
                   metrics=['accuracy'])
-
     history = model.fit(data_1, labels,
                         epochs=epoch, batch_size=batch_size,
                         validation_split=0.1)
+
     res = model.predict(data_2, batch_size=batch_size)
+    print 'res is',res.shape
 
-    # trainDataVecs = getFeatureVecs(getCleanReviews(train), w2vModel,word_maxlen = 300 , num_features=300)
-    # print "Creating average feature vecs for test reviews"
-    #
-    # testDataVecs = getFeatureVecs(getCleanReviews(test), w2vModel,word_maxlen = 300 , num_features=300)
-    # trainDataVecs = np.nan_to_num(trainDataVecs)
-    # testDataVecs = np.nan_to_num(testDataVecs)
-    # res = mainModel(w2vModel,trainDataVecs,testDataVecs,train['sentiment'])
-
-    output = pd.DataFrame(data={"id": test["id"], "sentiment": res})
+    output = pd.DataFrame(data={"id": test["id"], "sentiment": res[:,0]})
     output.to_csv("Word2Vec_mlp.csv", index=False, quoting=3)
     print "Wrote Word2Vec_mlp.csv"
