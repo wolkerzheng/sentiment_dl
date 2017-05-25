@@ -5,7 +5,6 @@ __author__ = 'wolker'
 """
 普通lstm precision: 0.79
 score:0.92377
-
 """
 import os
 import pandas as pd
@@ -15,178 +14,16 @@ from nltk.corpus import stopwords
 import numpy as np
 from gensim.models import Word2Vec
 from keras.models import Model
-from keras.layers import Dense,Dropout,Activation,Embedding,Input,LSTM
+from keras.layers import Dense,Dropout,Activation,\
+    Embedding,Input,LSTM,TimeDistributed,Flatten,AveragePooling1D
+from keras.layers import RepeatVector,Permute,merge
 from keras.preprocessing.sequence import pad_sequences
 from keras import backend as K
 from keras.engine import InputSpec
 from keras.layers import activations, Wrapper
-import attention_lstm as atten
-class AttentionLSTM(LSTM):
-    def __init__(self, output_dim, attention_vec, attn_activation='tanh', single_attention_param=False, **kwargs):
-        self.attention_vec = attention_vec
-        self.attn_activation = activations.get(attn_activation)
-        self.single_attention_param = single_attention_param
 
-        super(AttentionLSTM, self).__init__(output_dim, **kwargs)
-
-    def build(self, input_shape):
-        super(AttentionLSTM, self).build(input_shape)
-
-        if hasattr(self.attention_vec, '_keras_shape'):
-            attention_dim = self.attention_vec._keras_shape[1]
-        else:
-            raise Exception('Layer could not be build: No information about expected input shape.')
-
-        self.U_a = self.inner_init((self.output_dim, self.output_dim),
-                                   name='{}_U_a'.format(self.name))
-        self.b_a = K.zeros((self.output_dim,), name='{}_b_a'.format(self.name))
-
-        self.U_m = self.inner_init((attention_dim, self.output_dim),
-                                   name='{}_U_m'.format(self.name))
-        self.b_m = K.zeros((self.output_dim,), name='{}_b_m'.format(self.name))
-
-        if self.single_attention_param:
-            self.U_s = self.inner_init((self.output_dim, 1),
-                                       name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
-        else:
-            self.U_s = self.inner_init((self.output_dim, self.output_dim),
-                                       name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((self.output_dim,), name='{}_b_s'.format(self.name))
-
-        self.trainable_weights += [self.U_a, self.U_m, self.U_s, self.b_a, self.b_m, self.b_s]
-
-        if self.initial_weights is not None:
-            self.set_weights(self.initial_weights)
-            del self.initial_weights
-
-    def step(self, x, states):
-        h, [h, c] = super(AttentionLSTM, self).step(x, states)
-        attention = states[4]
-
-        m = self.attn_activation(K.dot(h, self.U_a) * attention + self.b_a)
-        # Intuitively it makes more sense to use a sigmoid (was getting some NaN problems
-        # which I think might have been caused by the exponential function -> gradients blow up)
-        s = K.sigmoid(K.dot(m, self.U_s) + self.b_s)
-
-        if self.single_attention_param:
-            h = h * K.repeat_elements(s, self.output_dim, axis=1)
-        else:
-            h = h * s
-
-        return h, [h, c]
-
-    def get_constants(self, x):
-        constants = super(AttentionLSTM, self).get_constants(x)
-        constants.append(K.dot(self.attention_vec, self.U_m) + self.b_m)
-        return constants
-
-
-class AttentionLSTMWrapper(Wrapper):
-    def __init__(self, layer, attention_vec, attn_activation='tanh', single_attention_param=False, **kwargs):
-        assert isinstance(layer, LSTM)
-        self.supports_masking = True
-        self.attention_vec = attention_vec
-        self.attn_activation = activations.get(attn_activation)
-        self.single_attention_param = single_attention_param
-        super(AttentionLSTMWrapper, self).__init__(layer, **kwargs)
-
-    def build(self, input_shape):
-        assert len(input_shape) >= 3
-        self.input_spec = [InputSpec(shape=input_shape)]
-
-        if not self.layer.built:
-            self.layer.build(input_shape)
-            self.layer.built = True
-
-        super(AttentionLSTMWrapper, self).build()
-
-        if hasattr(self.attention_vec, '_keras_shape'):
-            attention_dim = self.attention_vec._keras_shape[1]
-        else:
-            raise Exception('Layer could not be build: No information about expected input shape.')
-
-        self.U_a = self.layer.inner_init((self.layer.output_dim, self.layer.output_dim), name='{}_U_a'.format(self.name))
-        self.b_a = K.zeros((self.layer.output_dim,), name='{}_b_a'.format(self.name))
-
-        self.U_m = self.layer.inner_init((attention_dim, self.layer.output_dim), name='{}_U_m'.format(self.name))
-        self.b_m = K.zeros((self.layer.output_dim,), name='{}_b_m'.format(self.name))
-
-        if self.single_attention_param:
-            self.U_s = self.layer.inner_init((self.layer.output_dim, 1), name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
-        else:
-            self.U_s = self.layer.inner_init((self.layer.output_dim, self.layer.output_dim), name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((self.layer.output_dim,), name='{}_b_s'.format(self.name))
-
-        self.trainable_weights = [self.U_a, self.U_m, self.U_s, self.b_a, self.b_m, self.b_s]
-
-    def get_output_shape_for(self, input_shape):
-        return self.layer.get_output_shape_for(input_shape)
-
-    def step(self, x, states):
-        h, [h, c] = self.layer.step(x, states)
-        attention = states[4]
-
-        m = self.attn_activation(K.dot(h, self.U_a) * attention + self.b_a)
-        s = K.sigmoid(K.dot(m, self.U_s) + self.b_s)
-
-        if self.single_attention_param:
-            h = h * K.repeat_elements(s, self.layer.output_dim, axis=1)
-        else:
-            h = h * s
-
-        return h, [h, c]
-
-    def get_constants(self, x):
-        constants = self.layer.get_constants(x)
-        constants.append(K.dot(self.attention_vec, self.U_m) + self.b_m)
-        return constants
-
-    def call(self, x, mask=None):
-        # input shape: (nb_samples, time (padded with zeros), input_dim)
-        # note that the .build() method of subclasses MUST define
-        # self.input_spec with a complete input shape.
-        input_shape = self.input_spec[0].shape
-        if K._BACKEND == 'tensorflow':
-            if not input_shape[1]:
-                raise Exception('When using TensorFlow, you should define '
-                                'explicitly the number of timesteps of '
-                                'your sequences.\n'
-                                'If your first layer is an Embedding, '
-                                'make sure to pass it an "input_length" '
-                                'argument. Otherwise, make sure '
-                                'the first layer has '
-                                'an "input_shape" or "batch_input_shape" '
-                                'argument, including the time axis. '
-                                'Found input shape at layer ' + self.name +
-                                ': ' + str(input_shape))
-        if self.layer.stateful:
-            initial_states = self.layer.states
-        else:
-            initial_states = self.layer.get_initial_states(x)
-        constants = self.get_constants(x)
-        preprocessed_input = self.layer.preprocess_input(x)
-
-        last_output, outputs, states = K.rnn(self.step, preprocessed_input,
-                                             initial_states,
-                                             go_backwards=self.layer.go_backwards,
-                                             mask=mask,
-                                             constants=constants,
-                                             unroll=self.layer.unroll,
-                                             input_length=input_shape[1])
-        if self.layer.stateful:
-            self.updates = []
-            for i in range(len(states)):
-                self.updates.append((self.layer.states[i], states[i]))
-
-        if self.layer.return_sequences:
-            return outputs
-        else:
-            return last_output
 def getCleanReviews(reviews):
     """
-
     :param reviews:
     :return:
     """
@@ -307,30 +144,35 @@ if __name__ == '__main__':
                                 trainable=False)
     # embedding输出：(None, MAX_SEQUENCE_LENGTH, EMBDDING_DIM)
     embedded_sequences_1 = embedding_layer(sequence_1_input)
-    hidden_layer1 = LSTM(EMBDDING_DIM,return_sequences=True,activation='relu')(embedded_sequences_1)
-    hidden_layer1 = Dropout(0.3)(hidden_layer1)
-    hidden_layer1 = atten.Attention()(hidden_layer1)
+    lstm_layer1 = LSTM(EMBDDING_DIM,return_sequences=True,activation='relu')(embedded_sequences_1)
+    lstm_layer1 = Dropout(0.3)(lstm_layer1)
+    att = TimeDistributed(Dense(1,activation='tanh'))(lstm_layer1)
+    att = Flatten()(att)
+    att = Activation(activation="softmax")(att)
+    # att = RepeatVector(EMBDDING_DIM)(att)
+    # att = Permute((2, 1))(att)
+    mer = merge([att, lstm_layer1], mode='mul')
+    hid = AveragePooling1D(pool_length=MAX_SEQUENCE_LENGTH)(mer)
+    hid = Flatten()(hid)
+    # hidden_layer1 = atten.Attention()(hidden_layer1)
     # hidden_layer1 = LSTM(EMBDDING_DIM, activation='relu')(embedded_sequences_1)
     # hidden_layer1 = Dropout(0.3)(hidden_layer1)
     # hidden_layer1 =
-    pred = Dense(1,activation='sigmoid')(hidden_layer1)
+    pred = Dense(1,activation='sigmoid')(hid)
     model = Model(inputs=sequence_1_input,outputs=pred)
-    # model.compile(loss='binary_crossentropy',
-    #               optimizer='adam',
-    #               metrics=['accuracy'])
-    # model = Sequential()
-    # model.add(Embedding(nb_words, EMBDDING_DIM,
-    #                     input_length=MAX_SEQUENCE_LENGTH))
 
-    # model.add(LSTM(EMBDDING_DIM,
-    #                dropout=0.2,
-    #                recurrent_dropout=0.2))
-    #
-    # model.add(Dense(1, activation='sigmoid'))
-    # model.add(Embedding(nb_words, EMBDDING_DIM))
-    # model.add(LSTM(EMBDDING_DIM, dropout=0.2, recurrent_dropout=0.2))
-    # model.add(Dense(1, activation='sigmoid'))
-
+    """
+    注意力模型
+    attention = TimeDistributed(Dense(1, activation='tanh'))(activations) 
+    attention = Flatten()(attention)
+    attention = Activation('softmax')(attention)
+    attention = RepeatVector(units)(attention)
+    attention = Permute([2, 1])(attention)
+    
+    # apply the attention
+    sent_representation = merge([activations, attention], mode='mul')
+    sent_representation = Lambda(lambda xin: K.sum(xin, axis=1))(sent_representation)
+    """
     model.compile(loss='binary_crossentropy',
                   optimizer='adam',
                   metrics=['accuracy'])
@@ -343,4 +185,4 @@ if __name__ == '__main__':
     # print res[0:10, 0]
     output = pd.DataFrame(data={"id": test["id"], "sentiment": res[:, 0]})
     output.to_csv("Word2Vec_lstm.csv", index=False, quoting=3)
-    print "Wrote Word2Vec_lstm.csv"
+print "Wrote Word2Vec_lstm.csv"
